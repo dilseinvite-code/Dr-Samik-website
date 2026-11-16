@@ -28,11 +28,13 @@ import { useAuth, OWNER_EMAIL } from '../../context/AuthContext';
 import { getEnquiries, seedInitialDataIfEmpty } from '../../lib/firestoreService';
 
 export const AdminLayout: React.FC = () => {
-  const { user, isAdmin, isOwner, loading, logout } = useAuth();
+  const { user, isAdmin, isOwner, loading, logout, refreshAccess, authError } = useAuth();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
-  const [pendingEnquiriesCount, setPendingEnquiriesCount] = useState<number>(0);
+  const [pendingEnquiriesCount, setPendingEnquiriesCount] = useState<number | null>(null);
   const [isSeeding, setIsSeeding] = useState(false);
   const [seedSuccess, setSeedSuccess] = useState(false);
+  const [seedError, setSeedError] = useState<string | null>(null);
+  const [enquiryCountError, setEnquiryCountError] = useState(false);
   const navigate = useNavigate();
   const location = useLocation();
 
@@ -66,25 +68,43 @@ export const AdminLayout: React.FC = () => {
   }, [user, loading, navigate, location]);
 
   useEffect(() => {
+    let cancelled = false;
     if (user && isAdmin) {
-      // Fetch new enquiries count
       getEnquiries().then((items) => {
-        const newCount = items.filter((i) => i.status === 'new').length;
-        setPendingEnquiriesCount(newCount);
+        if (cancelled) return;
+        setPendingEnquiriesCount(items.filter((i) => i.status === 'new').length);
+        setEnquiryCountError(false);
       }).catch((err) => {
         console.error('Unable to load pending enquiry count:', err);
+        if (!cancelled) {
+          setPendingEnquiriesCount(null);
+          setEnquiryCountError(true);
+        }
       });
+    } else {
+      setPendingEnquiriesCount(null);
+      setEnquiryCountError(false);
     }
-  }, [user, isAdmin]);
+    return () => { cancelled = true; };
+  }, [user, isAdmin, location.pathname]);
 
   const handleManualSeed = async () => {
+    if (!isOwner) {
+      setSeedError('Only the verified practice owner can initialize starter content.');
+      return;
+    }
+    if (!window.confirm(
+      'This may publish starter website text, treatments and sample articles wherever the database is empty. Review all medical details and obtain the doctor’s approval before using it on a live website. Continue?'
+    )) return;
     setIsSeeding(true);
+    setSeedError(null);
     try {
       await seedInitialDataIfEmpty(user?.email || undefined);
       setSeedSuccess(true);
       setTimeout(() => setSeedSuccess(false), 3000);
     } catch (err) {
       console.error('Seed error:', err);
+      setSeedError('Database sync failed. Check admin permissions and Firebase configuration.');
     } finally {
       setIsSeeding(false);
     }
@@ -123,6 +143,7 @@ export const AdminLayout: React.FC = () => {
               <br />
               This Google account does not currently hold administrator privileges for Dr. Samik Sharma&apos;s practice management system.
             </p>
+            {authError && <p role="alert" className="mt-3 text-xs leading-relaxed text-rose-300">{authError}</p>}
           </div>
 
           <div className="p-3.5 bg-[#121212] border border-white/5 text-[11px] text-[#AFA89F] text-left">
@@ -130,7 +151,14 @@ export const AdminLayout: React.FC = () => {
             <p>To grant admin rights to this email, contact the primary owner at <strong className="text-[#F6F0E9]">{OWNER_EMAIL}</strong> or sign in with the verified owner account.</p>
           </div>
 
-          <div className="flex items-center justify-center gap-3 pt-2">
+          <div className="flex flex-wrap items-center justify-center gap-3 pt-2">
+            <button
+              type="button"
+              onClick={() => void refreshAccess()}
+              className="px-5 py-2.5 border border-[#C9A47F]/50 text-[#C9A47F] text-xs font-semibold uppercase tracking-wider hover:bg-[#C9A47F]/10"
+            >
+              Retry Verification
+            </button>
             <button
               onClick={() => logout().then(() => navigate('/admin/login'))}
               className="px-5 py-2.5 bg-[#C9A47F] text-[#0B0B0B] text-xs font-semibold uppercase tracking-wider hover:bg-[#DFCAAF] transition-colors cursor-pointer"
@@ -151,7 +179,7 @@ export const AdminLayout: React.FC = () => {
 
   const navItems = [
     { label: 'Overview', to: '/admin', icon: LayoutDashboard, end: true },
-    { label: 'Appointments', to: '/admin/appointments', icon: CalendarCheck, badge: pendingEnquiriesCount },
+    { label: 'Appointments', to: '/admin/appointments', icon: CalendarCheck, badge: pendingEnquiriesCount ?? undefined },
     { label: 'Treatments CMS', to: '/admin/treatments', icon: Sparkles },
     { label: 'Homepage Editor', to: '/admin/homepage', icon: Home },
     { label: 'About Surgeon', to: '/admin/about', icon: UserCheck },
@@ -271,12 +299,13 @@ export const AdminLayout: React.FC = () => {
 
         {/* Sidebar Footer */}
         <div className="p-4 border-t border-[#C9A47F]/20 bg-[#12100F] space-y-3">
-          {/* Quick sync button */}
+          {/* Starter content initialization is sensitive and restricted to the owner. */}
+          {isOwner && (
           <button
             onClick={handleManualSeed}
             disabled={isSeeding}
             className="w-full flex items-center justify-center gap-2 px-3 py-2 bg-[#24211E] hover:bg-[#2F2A27] border border-[#C9A47F]/30 text-[11px] text-[#AFA89F] hover:text-[#C9A47F] transition-colors cursor-pointer"
-            title="Ensure default treatments and pages are published in database"
+            title="Initialize missing starter content only after medical review"
           >
             {seedSuccess ? (
               <>
@@ -286,10 +315,22 @@ export const AdminLayout: React.FC = () => {
             ) : (
               <>
                 <RefreshCw className={`w-3.5 h-3.5 ${isSeeding ? 'animate-spin' : ''}`} />
-                <span>{isSeeding ? 'Syncing Schema...' : 'Sync Clinical Defaults'}</span>
+                <span>{isSeeding ? 'Syncing Schema...' : 'Initialize Starter Content'}</span>
               </>
             )}
           </button>
+          )}
+
+          {seedError && (
+            <p role="alert" className="border border-rose-500/40 bg-rose-950/20 p-2.5 text-[11px] leading-relaxed text-rose-200">
+              {seedError}
+            </p>
+          )}
+          {enquiryCountError && (
+            <Link to="/admin/appointments" className="block text-[11px] text-amber-300 underline">
+              Enquiry count unavailable — open Appointments to retry
+            </Link>
+          )}
 
           {/* User profile & Logout */}
           <div className="flex items-center justify-between pt-1">

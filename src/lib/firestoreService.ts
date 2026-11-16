@@ -910,7 +910,8 @@ export async function getAdminUsers(): Promise<AdminUserRecord[]> {
     return snapshot.docs.map((d) => d.data() as AdminUserRecord);
   } catch (err) {
     console.error('Failed to get admin users:', err);
-    return [];
+    // An inaccessible admin list must not be displayed as "no admins".
+    throw err;
   }
 }
 
@@ -987,6 +988,7 @@ export async function seedInitialDataIfEmpty(userEmail?: string) {
       }
     }
   } catch (err) {
-    console.warn('Initial data seeding note (rules or connection pending):', err);
+    console.error('Initial data seeding failed:', err);
+    throw err;
   }
 }
